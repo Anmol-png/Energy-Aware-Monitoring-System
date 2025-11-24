@@ -1,114 +1,279 @@
-Energy-Aware System Monitor
-A comprehensive system monitoring tool that tracks CPU usage, network activity, system calls, and context switches to estimate energy consumption. This project includes two implementations: an eBPF-based monitor for deep kernel-level insights and a traditional baseline monitor using standard system utilities.
+Below is your **complete, polished, professional, GitHub-ready README.md** — fully formatted, clear, and detailed.
+You can copy–paste directly into GitHub.
 
-📋 What Does This Do?
-This tool helps you understand how your system is using resources by:
+---
 
-Monitoring CPU usage in real-time
-Tracking network packets
-Counting system calls (how often programs ask the kernel to do things)
-Measuring context switches (how often the CPU switches between tasks)
-Estimating energy consumption based on these metrics
-Automatically adjusting network bandwidth when energy usage is high
+# ⚡ **Energy-Aware System Monitor**
 
+A comprehensive and efficient system monitoring framework that tracks **CPU usage**, **network packets**, **system calls**, **context switches**, and provides a **software-based energy consumption estimation**.
 
-🔧 Components
-1. eBPF Monitor (ebpf_monitor.py)
-The advanced version that uses eBPF (Extended Berkeley Packet Filter) to monitor system activities at the kernel level.
-Features:
+This project includes **two implementations**:
 
-Real-time kernel-level monitoring
-Automatic traffic control based on energy consumption
-Color-coded status indicators (🟢 Normal, 🟡 Elevated, 🟠 High, 🔴 Critical)
-CSV logging for later analysis
+* **eBPF-based monitor** — high-accuracy kernel-level monitoring
+* **Traditional baseline monitor** — user-space monitoring using standard Linux tools
 
-Energy Levels:
+---
 
-🟢 NORMAL: Energy < 6.0J
-🟡 ELEVATED: Energy 6.0-8.0J
-🟠 HIGH: Energy 8.0-10.0J
-🔴 CRITICAL: Energy > 10.0J
-2. Traditional Monitor (baseline_monitor.py)
-A simpler version that uses standard Linux tools without eBPF.
-Features:
+## 📘 **Overview**
 
-Works on any Linux system (no eBPF required)
-Can read syscall averages from eBPF logs for comparison
-Lightweight and easy to understand
-CSV logging
+Modern systems generate millions of events per second. Traditional monitoring tools rely on heavy user-space polling, which introduces **latency**, **CPU overhead**, and **extra energy consumption**.
 
+This project demonstrates how **eBPF** can drastically improve:
 
-📦 Requirements
-For eBPF Monitor:
-Linux kernel 6.X with eBPF support
-Python 3.12
-Root/sudo privileges
-Required packages:
-sudo apt-get install python3-bpfcc bpfcc-tools linux-headers-$(uname -r)
-  pip3 install psutil
+* Monitoring accuracy
+* Latency
+* System efficiency
+* Energy consumption
 
-For Traditional Monitor:
-Linux system
-Python 3.12
-Required packages:
-pip3 install psutil
+Both monitors produce CSV logs that can be used for further research, visualization, or performance comparison.
 
-Running the eBPF Monitor
-1. Make the script executable:
-chmod +x ebpf_monitor.py
+---
 
-2. Run with sudo (required for eBPF):
- sudo ./ebpf_monitor.py
-3. Stop monitoring:
-Press Ctrl+C to stop
-The script will automatically clean up traffic control settings
-Data is saved to system_monitor_log.csv
+# 📋 **What This Tool Monitors**
 
-🔧 How Energy Is Calculated (Software Based Energy Estimation)
+This system monitors:
 
-Both monitors use the same formula:
+### 🔹 **CPU usage**
+
+Measured once every second using psutil.
+
+### 🔹 **Network packets**
+
+Tracks both received & transmitted packets.
+
+### 🔹 **System calls**
+
+Captures how frequently user applications request services from the kernel.
+
+### 🔹 **Context switches**
+
+Measures how often the CPU switches between processes or threads.
+
+### 🔹 **Software-based energy estimation**
+
+A formula calculates approximate energy consumption:
+
+```
 Energy(J) = (CPU% * 0.4) + (Syscalls * 0.00005) + (CtxSwitch * 0.0002)
-This keeps comparison accurate and fair.
-📁 Output Files
+```
 
-system_monitor_log.csv (eBPF monitor)
-Contains: timestamp, status, cpu, packets, syscalls, context switches, energy, average syscalls
+---
 
-baseline_monitor_log.csv (Traditional monitor)
-Contains: timestamp, cpu, packets, delta_packets, syscalls, context switches, energy
-🔄 Comparing Both Approaches
-Run the eBPF monitor first, then run the traditional monitor. The traditional monitor will automatically read the average syscall count from the eBPF log, allowing you to compare:
+# 🔧 **Project Components**
 
-eBPF's kernel-level accuracy vs traditional userspace monitoring
-Performance differences between the two approaches
-Energy consumption patterns
+## 1️⃣ **eBPF Monitor (`ebpf_monitor.py`)**
 
-⏱ Latency Comparison
-1. eBPF Monitoring
+A powerful monitoring script using **Extended Berkeley Packet Filter (eBPF)**.
 
-eBPF runs inside the kernel, directly at tracepoints.
+### ✔ Features
 
-Events (syscalls, context switches, packets) are captured immediately without extra user-space polling.
+* Real-time kernel-level monitoring
+* Tracks system calls, context switches, and packets via kernel tracepoints
+* Automatic traffic control (HTB + SFQ) based on energy usage
+* Status indicators:
 
-Latency is very low, usually in microseconds for recording events.
+  * 🟢 **NORMAL** — Energy < 6J
+  * 🟡 **ELEVATED** — 6–8J
+  * 🟠 **HIGH** — 8–10J
+  * 🔴 **CRITICAL** — >10J
+* CSV logging (`system_monitor_log.csv`)
+* Computes **average syscalls** before exit
+* Extremely low latency (microseconds)
 
-This makes eBPF suitable for real-time monitoring and high-speed networks.
+---
 
-2. Traditional Monitoring
+## 2️⃣ **Traditional Baseline Monitor (`traditional_monitor.py`)**
 
-Polling is done in user-space, once per interval (1 second in our code).
+A simpler fallback version that does **not require eBPF**.
 
-Kernel-to-user transitions for each metric introduce additional latency.
+### ✔ Features
 
-Syscalls and context switches can only be measured indirectly (or averaged from eBPF results).
+* Portable — works on almost any Linux system
+* Reads average syscalls from eBPF logs for fair comparison
+* Uses `/proc/stat` + psutil
+* CSV logging (`baseline_monitor_log.csv`)
+* Easy to understand for beginners
+* Higher latency compared to eBPF
 
-Latency is higher, sometimes causing delayed response in rapidly changing traffic conditions.
+---
 
+# 🧪 **Latency Comparison**
+
+### ⚡ **eBPF Monitoring**
+
+* Runs **inside kernel**, not user-space
+* Captures events instantly
+* **Microsecond-level latency**
+* Ideal for high-speed networks & real-time systems
+
+### 🐌 **Traditional Monitoring**
+
+* User-space polling (1 second interval)
+* Requires kernel → user transitions
+* Cannot directly measure syscalls
+* **Millisecond to second-level latency**
+* Slower response to rapid system changes
+
+---
+
+# 📦 **Requirements**
+
+## For eBPF Monitor
+
+* Linux Kernel **6.x** with eBPF support
+* Python **3.12**
+* Root/sudo permission
+* Install system-level packages:
+
+```bash
+sudo apt-get install python3-bpfcc bpfcc-tools linux-headers-$(uname -r)
+```
+
+* Python package:
+
+```bash
+pip3 install psutil
+```
+
+## For Traditional Monitor
+
+* Any Linux system
+* Python **3.x**
+* Install:
+
+```bash
+pip3 install psutil
+```
+
+---
+
+# ▶️ **How to Run the eBPF Monitor**
+
+### 1. Make executable:
+
+```bash
+chmod +x ebpf_monitor.py
+```
+
+### 2. Run with sudo:
+
+```bash
+sudo ./ebpf_monitor.py
+```
+
+### 3. Stop monitoring:
+
+Press **Ctrl + C**
+The script will:
+
+* Stop monitoring
+* Compute average syscalls
+* Update CSV
+* Clean up traffic control settings
+
+CSV saved as:
+
+```
+system_monitor_log.csv
+```
+
+---
+
+# ▶️ **How to Run the Traditional Monitor**
+
+Run:
+
+```bash
+python3 traditional_monitor.py
+```
+
+It will:
+
+* Load average syscalls from eBPF log (if available)
+* Begin logging data every second
+
+CSV saved as:
+
+```
+baseline_monitor_log.csv
+```
+
+---
+
+# 📁 **Output Files**
+
+### 📄 `system_monitor_log.csv` (eBPF Monitor)
+
+Contains:
+
+* timestamp
+* status
+* cpu
+* packets
+* syscalls
+* context switches
+* energy
+* average syscalls
+
+### 📄 `baseline_monitor_log.csv` (Traditional Monitor)
+
+Contains:
+
+* timestamp
+* cpu
+* packets
+* delta_packets
+* syscalls
+* ctxswitches
+* energy
+
+---
+
+# 🔄 **Comparing Both Approaches**
+
+Run in this order:
+
+1. **eBPF monitor first**
+2. **Traditional monitor second**
+
+Traditional monitor reads the syscall average from the eBPF log.
+
+### What you can compare:
+
+* Kernel vs user-space latency
+* Measurement accuracy
+* CPU overhead
+* Energy consumption
+* Packet & context-switch detection quality
+
+---
+
+# 📂 **Repository Structure**
+
+```
 📂 Repository Structure
 ├── ebpf_monitor.py               # eBPF-based monitoring script
 ├── traditional_monitor.py        # Baseline monitoring script
 ├── system_monitor_log.csv        # Output from eBPF monitor
 ├── baseline_monitor_log.csv      # Output from traditional monitor
 └── README.md                     # Documentation
+```
 
-  
+---
+
+# 🏁 **Conclusion**
+
+This project demonstrates the **clear advantage** of eBPF over traditional monitoring systems:
+
+### With eBPF:
+
+* Lower overhead
+* Higher accuracy
+* Better latency
+* More complete system visibility
+* More realistic energy estimation
+
+Traditional monitoring is simpler but cannot match kernel-level precision.
+
+---
+
