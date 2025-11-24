@@ -261,6 +261,41 @@ Traditional monitor reads the syscall average from the eBPF log.
 
 ---
 
+📶 Dynamic Bandwidth Management (HTB + SFQ)
+
+The eBPF monitor includes an automatic bandwidth control system using Linux Traffic Control (tc) to prevent high energy consumption during heavy loads.
+
+When the system energy level goes high, the script does NOT reduce bandwidth, but instead classifies the current energy state and can trigger bandwidth policies.
+Right now the project sets up a clean HTB (Hierarchical Token Bucket) environment for stable packet monitoring.
+
+✔ What the Bandwidth System Does
+
+Removes any existing qdisc root (cleans the interface)
+
+Creates a new HTB root qdisc
+
+Creates a default traffic class at full speed (1000mbit)
+
+Adds SFQ (Stochastic Fairness Queueing) to keep packet flow fair and stable
+
+Ensures consistent and accurate packet sampling for eBPF
+
+✔ Why This Matters
+
+Normal network interfaces have unpredictable buffering and queueing.
+To get accurate packet counts for energy analysis, we apply:
+
+HTB → For shaping total bandwidth (fixed predictable rate)
+SFQ → For fair distribution of packets to avoid burst spikes
+
+This helps ensure:
+
+Stable Pkt/s (packet per second) measurement
+
+Smoother energy calculation
+
+More accurate traffic monitoring results
+
 # 🏁 **Conclusion**
 
 This project demonstrates the **clear advantage** of eBPF over traditional monitoring systems:
