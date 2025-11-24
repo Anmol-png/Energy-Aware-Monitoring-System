@@ -1,0 +1,4 @@
+sudo python3 full_correlation_monitor.py
+python3 traditional.py
+source /home/anmol/ebpf_project/venv/bin/activate  
+streamlit run dashboard_app.py
