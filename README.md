@@ -116,25 +116,6 @@ A simpler fallback version that does **not require eBPF**.
 
 ---
 
-# 📦 **Requirements**
-
-## For eBPF Monitor
-
-* Linux Kernel **6.x** with eBPF support
-* Python **3.12**
-* Root/sudo permission
-* Install system-level packages:
-
-```bash
-sudo apt-get install python3-bpfcc bpfcc-tools linux-headers-$(uname -r)
-```
-
-* Python package:
-
-```bash
-pip3 install psutil
-```
-
 ## For Traditional Monitor
 
 * Any Linux system
