@@ -1,5 +1,3 @@
-Below is your **complete, polished, professional, GitHub-ready README.md** — fully formatted, clear, and detailed.
-You can copy–paste directly into GitHub.
 
 ---
 
