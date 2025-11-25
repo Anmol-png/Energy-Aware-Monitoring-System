@@ -1,9 +1,10 @@
+
 #!/usr/bin/env python3
-# Energy-aware eBPF monitor (aligned output, avg syscalls only at start/end)
+# Energy-aware eBPF monitor with TC bandwidth throttling
 from bcc import BPF
 import psutil, time, datetime, os, csv, subprocess
 
-# ===================== eBPF Program =====================
+# ===================== eBPF Kernel Program =====================
 bpf_text = r"""
 BPF_HASH(sys_cnt, u32, u64);
 BPF_HASH(ctx_cnt, u32, u64);
@@ -34,11 +35,14 @@ TRACEPOINT_PROBE(net, netif_receive_skb) {
 }
 """
 
-# ===================== Traffic Control =====================
-INTERFACE = "ens33"
+# ===================== TC Traffic Control Setup =====================
+INTERFACE = "ens33" # Change to your network interface
 MAX_BANDWIDTH = "1000mbit"
 
 def setup_htb_qdisc():
+    """Setup HTB qdisc for dynamic bandwidth control"""
+    print(f"Setting up HTB Traffic Control on {INTERFACE}...")
+    
     commands = [
         f"tc qdisc del dev {INTERFACE} root 2>/dev/null || true",
         f"tc qdisc add dev {INTERFACE} root handle 1: htb default 10",
@@ -46,90 +50,157 @@ def setup_htb_qdisc():
         f"tc class add dev {INTERFACE} parent 1:1 classid 1:10 htb rate {MAX_BANDWIDTH} ceil {MAX_BANDWIDTH} burst 15k",
         f"tc qdisc add dev {INTERFACE} parent 1:10 handle 10: sfq perturb 10"
     ]
+    
     for cmd in commands:
-        subprocess.run(cmd, shell=True, capture_output=True, text=True)
+        result = subprocess.run(cmd, shell=True, capture_output=True, text=True)
+        if result.returncode != 0 and "Cannot delete" not in result.stderr:
+            print(f"Warning: {result.stderr}")
+    
+    print(f"✅ HTB qdisc configured on {INTERFACE}\n")
+
+def adjust_bandwidth(energy, cpu):
+    """
+    Dynamically adjust bandwidth based on energy consumption
+    NO PACKET LOSS - packets are queued, not dropped
+    """
+    if energy > 10.0:
+        new_rate = "100mbit"
+        status = "🔴 CRITICAL"
+    elif energy > 8.0:
+        new_rate = "300mbit"
+        status = "🟠 HIGH"
+    elif energy > 6.0:
+        new_rate = "600mbit"
+        status = "🟡 ELEVATED"
+    else:
+        new_rate = MAX_BANDWIDTH
+        status = "🟢 NORMAL"
+    
+    # Change HTB class rate dynamically
+    cmd = f"tc class change dev {INTERFACE} parent 1:1 classid 1:10 htb rate {new_rate} ceil {new_rate}"
+    result = subprocess.run(cmd, shell=True, capture_output=True, text=True)
+    
+    if result.returncode == 0:
+        return new_rate, status
+    else:
+        return None, "⚠️ ERROR"
 
 def cleanup_tc():
+    """Remove TC qdisc on exit"""
+    print("\nCleaning up Traffic Control...")
     subprocess.run(f"tc qdisc del dev {INTERFACE} root 2>/dev/null", shell=True)
+    print("✅ TC qdisc removed")
 
-def adjust_bandwidth(energy):
-    if energy > 10.0: return "🔴 CRITICAL"
-    elif energy > 8.0: return "🟠 HIGH"
-    elif energy > 6.0: return "🟡 ELEVATED"
-    else: return "🟢 NORMAL"
+# ===================== eBPF Helper Functions =====================
+def read_map_counter(table, default=0):
+    try:
+        keys = list(table.keys())
+        if not keys: return default
+        return int(table[keys[0]].value)
+    except Exception:
+        return default
 
-# ===================== Helper Functions =====================
-def read_map(table):
-    keys = list(table.keys())
-    return int(table[keys[0]].value) if keys else 0
+def get_cpu_usage():
+    return psutil.cpu_percent(interval=1)
 
-def get_cpu(): return psutil.cpu_percent(interval=1)
-def energy(cpu, sys_s, ctx_s):
-    return round((cpu * 0.4) + (sys_s * 0.00005) + (ctx_s * 0.0002), 2)
+def get_syscalls(prev_sys):
+    table = b["sys_cnt"]
+    total = read_map_counter(table, default=0)
+    delta = total - prev_sys if prev_sys is not None else 0
+    return total, delta
 
-# ===================== Main =====================
-CSV_FILE = "system_monitor_log.csv"
+def get_context_switches(prev_ctx):
+    table = b["ctx_cnt"]
+    total = read_map_counter(table, default=0)
+    delta = total - prev_ctx if prev_ctx is not None else 0
+    return total, delta
 
-print("Press Cntrl+c to stop")
+def get_total_packets(prev_pkt):
+    table = b["pkt_cnt"]
+    total = read_map_counter(table, default=0)
+    delta = total - prev_pkt if prev_pkt is not None else 0
+    return total, delta
 
+def estimate_energy(cpu, syscalls_s, ctx_s):
+    return round((cpu * 0.4) + (syscalls_s * 0.00005) + (ctx_s * 0.0002), 2)
 
-setup_htb_qdisc()
-b = BPF(text=bpf_text)
-
-# initialize CSV
-with open(CSV_FILE, "w", newline="") as f:
-    writer = csv.writer(f)
-    writer.writerow(["timestamp", "status", "cpu", "packets", "syscalls", "ctx", "energy", "syscalls_avg"])
-
-time.sleep(0.3)
-prev_sys = read_map(b["sys_cnt"])
-prev_ctx = read_map(b["ctx_cnt"])
-prev_pkt = read_map(b["pkt_cnt"])
-
-syscall_samples = []
-
-try:
-    while True:
-        cpu = get_cpu()
-        total_sys = read_map(b["sys_cnt"])
-        total_ctx = read_map(b["ctx_cnt"])
-        total_pkt = read_map(b["pkt_cnt"])
-
-        delta_sys = total_sys - prev_sys
-        delta_ctx = total_ctx - prev_ctx
-        delta_pkt = total_pkt - prev_pkt
-
-        syscall_samples.append(delta_sys)
-
-        E = energy(cpu, delta_sys, delta_ctx)
-        status = adjust_bandwidth(E)
-        timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-
-        print(
-            f"[{timestamp}] {status:10} | CPU:{cpu:5.1f}% | Pkt/s:{delta_pkt:5} | Sys/s:{delta_sys:5} | "
-            f"Ctx/s:{delta_ctx:5} | Energy:{E:6.2f}J"
-        )
-
-        with open(CSV_FILE, "a", newline="") as f:
-            writer = csv.writer(f)
-            writer.writerow([timestamp, status, cpu, delta_pkt, delta_sys, delta_ctx, E, 0])  # avg filled at exit
-
-        prev_sys, prev_ctx, prev_pkt = total_sys, total_ctx, total_pkt
-        time.sleep(1)
-
-except KeyboardInterrupt:
-    print("\nMonitoring stopped by user")
-    if syscall_samples:
-        avg_sys = round(sum(syscall_samples)/len(syscall_samples),2)
-   
-
-        # update last row in CSV with avg
-        with open(CSV_FILE, "r") as f:
-            rows = list(csv.reader(f))
-        rows[-1][-1] = avg_sys
-        with open(CSV_FILE, "w", newline="") as f:
-            writer = csv.writer(f)
-            writer.writerows(rows)
-
-    cleanup_tc()
-    print("Traffic control cleaned.\n")
+# ===================== Main Program =====================
+if __name__ == "__main__":
+    print("=" * 70)
+    print("Energy-Aware System Monitor with TC Bandwidth Throttling")
+    print("=" * 70)
+    
+    # Setup TC qdisc
+    setup_htb_qdisc()
+    
+    # Load eBPF program
+    print("Loading eBPF programs into kernel...")
+    b = BPF(text=bpf_text)
+    print("eBPF programs loaded\n")
+    
+    # CSV Setup
+    log_file = "system_monitor_log.csv"
+    with open(log_file, "w", newline="") as f:
+        writer = csv.writer(f)
+        writer.writerow([
+            "timestamp", "cpu_percent", "packets", "delta_packets",
+            "syscalls_total", "syscalls_per_s", "ctx_total", "ctx_per_s",
+            "energy_estimate", "syscalls_avg", "bandwidth_limit", "throttle_status"
+        ])
+    
+    print(f"Logging to: {log_file}")
+    print("Press Ctrl+C to stop\n")
+    print("-" * 70)
+    
+    # Initialize counters
+    time.sleep(0.5)
+    prev_sys_total = read_map_counter(b["sys_cnt"], default=0)
+    prev_ctx_total = read_map_counter(b["ctx_cnt"], default=0)
+    prev_pkt_total = read_map_counter(b["pkt_cnt"], default=0)
+    syscalls_history = []
+    
+    try:
+        while True:
+            cpu = get_cpu_usage()
+            sys_total, sys_delta = get_syscalls(prev_sys_total)
+            ctx_total, ctx_delta = get_context_switches(prev_ctx_total)
+            pkt_total, pkt_delta = get_total_packets(prev_pkt_total)
+            
+            syscalls_history.append(sys_delta)
+            syscalls_avg = round(sum(syscalls_history)/len(syscalls_history), 2)
+            
+            energy = estimate_energy(cpu, sys_delta, ctx_delta)
+            timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            
+            # DYNAMIC BANDWIDTH THROTTLING (NO PACKET LOSS)
+            bandwidth, status = adjust_bandwidth(energy, cpu)
+            
+            # Console output
+            print(f"[{timestamp}] {status} | CPU:{cpu:5.1f}% | Energy:{energy:6.2f}J | "
+                  f"BW:{bandwidth:>8} | Syscalls/s:{sys_delta:<6} | Packets:{pkt_delta:<6}")
+            
+            # CSV logging
+            with open(log_file, "a", newline="") as f:
+                writer = csv.writer(f)
+                writer.writerow([
+                    timestamp, cpu, pkt_total, pkt_delta,
+                    sys_total, sys_delta, ctx_total, ctx_delta,
+                    energy, syscalls_avg, bandwidth, status
+                ])
+            
+            # Update previous values
+            prev_sys_total = sys_total
+            prev_ctx_total = ctx_total
+            prev_pkt_total = pkt_total
+            
+            time.sleep(1)
+    
+    except KeyboardInterrupt:
+        print("\n" + "=" * 70)
+        print("Monitoring stopped by user")
+        print("=" * 70)
+        cleanup_tc()
+        print(f"Data saved in '{log_file}'")
+        if syscalls_history:
+            final_avg = round(sum(syscalls_history)/len(syscalls_history), 2)
+            print(f"Final Average Syscalls/s: {final_avg}")
